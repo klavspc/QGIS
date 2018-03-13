@@ -45,6 +45,9 @@ class APP_EXPORT QgsProjectProperties : public QgsOptionsDialogBase, private Ui:
     //! Constructor
     QgsProjectProperties( QgsMapCanvas *mapCanvas, QWidget *parent = nullptr, Qt::WindowFlags fl = QgsGuiUtils::ModalDialogFlags );
 
+    QMap< QString, QString > *createPageWidgetNameMap();
+
+    void setCurrentPage( const QString& );
 
     ~QgsProjectProperties() override;
 
