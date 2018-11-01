@@ -38,7 +38,7 @@ class QgsWfsCapabilities : public QgsWfsRequest
       FeatureType() = default;
 
       QString name;
-      QString nameSpace; // for some Deegree servers that requires a NAMESPACES parameter for GetFeature
+      QString nameSpace; // for some servers that requires a NAMESPACES parameter for GetFeature / DescribeFeature
       QString title;
       QString abstract;
       QList<QString> crslist; // first is default

@@ -400,10 +400,20 @@ void QgsWfsCapabilities::capabilitiesReplyFinished()
       {
         QString prefixOfTypename = featureType.name.section( ':', 0, 0 );
 
-        // for some Deegree servers that requires a NAMESPACES parameter for GetFeature
+        //For some servers that require a NAMESPACES parameter for DescribeFeature / GetFeature
         if ( psFeatureTypeIter )
         {
+          //Look in FeatureType tag
           featureType.nameSpace = CPLGetXMLValue( psFeatureTypeIter, ( "xmlns:" + prefixOfTypename ).toUtf8().constData(), "" );
+        }
+
+        if (featureType.nameSpace.isEmpty())
+        {
+          //Try to look for namespace in Name tag (GO Publisher)
+          //<wfs:FeatureType>
+          // <wfs:Name xmlns:dagi="http://data.gov.dk/schemas/dagi/2/gml3sfp">dagi:Menighedsraadsafstemningsomraade</wfs:Name>
+          // <wfs:Title>Menighedsraadsafstemningsomraade</wfs:Title>
+          featureType.nameSpace = CPLGetXMLValue( psFeatureTypeIter, ( "wfs:Name.xmlns:" + prefixOfTypename ).toUtf8().constData(), "" );
         }
       }
     }

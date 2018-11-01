@@ -21,12 +21,34 @@ QgsWFSDescribeFeatureType::QgsWFSDescribeFeatureType( QgsWFSDataSourceURI &uri )
 }
 
 bool QgsWFSDescribeFeatureType::requestFeatureType( const QString &WFSVersion,
-    const QString &typeName, bool bUsePlural )
+    const QString &typeName )
 {
   QUrl url( mUri.requestUrl( QStringLiteral( "DescribeFeatureType" ) ) );
   url.addQueryItem( QStringLiteral( "VERSION" ), WFSVersion );
-  url.addQueryItem( bUsePlural ?
-                    QStringLiteral( "TYPENAMES" ) : QStringLiteral( "TYPENAME" ), typeName );
+  //url.addQueryItem( bUsePlural ? QStringLiteral( "TYPENAMES" ) : QStringLiteral( "TYPENAME" ), typeName );
+  if ( WFSVersion.startsWith( QLatin1String( "2.0" ) ) )
+    url.addQueryItem( QStringLiteral( "TYPENAMES" ),  typeName );
+  else
+    url.addQueryItem( QStringLiteral( "TYPENAME" ),  typeName );
+
+  return sendGET( url, true, false );
+}
+
+bool QgsWFSDescribeFeatureType::requestFeatureType( const QString &WFSVersion,
+    const QString &typeName, const QString &namespaces )
+{
+  QUrl url( mUri.requestUrl( QStringLiteral( "DescribeFeatureType" ) ) );
+  url.addQueryItem( QStringLiteral( "VERSION" ), WFSVersion );
+
+  if ( WFSVersion.startsWith( QLatin1String( "2.0" ) ) )
+    url.addQueryItem( QStringLiteral( "TYPENAMES" ),  typeName );
+  else
+    url.addQueryItem( QStringLiteral( "TYPENAME" ),  typeName );
+
+  if (!namespaces.isEmpty())
+  {
+      url.addQueryItem( QStringLiteral( "NAMESPACES" ), namespaces );
+  }
 
   return sendGET( url, true, false );
 }

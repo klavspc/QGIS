@@ -112,6 +112,7 @@ bool QgsWfsRequest::sendGET( const QUrl &url, bool synchronous, bool forceRefres
   }
 
   QgsDebugMsgLevel( QStringLiteral( "Calling: %1" ).arg( modifiedUrl.toDisplayString( ) ), 4 );
+  QgsMessageLog::logMessage( QStringLiteral( "Calling: %1" ).arg( modifiedUrl.toDisplayString( ) ));
 
   QNetworkRequest request( modifiedUrl );
   if ( !mUri.auth().setAuthorization( request ) )

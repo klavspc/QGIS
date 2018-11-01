@@ -1120,7 +1120,20 @@ int QgsWFSSharedData::getFeatureCount( bool issueRequestIfNeeded )
   {
     mGetFeatureHitsIssued = true;
     QgsWFSFeatureHitsRequest request( mURI );
-    int featureCount = request.getFeatureCount( mWFSVersion, mWFSFilter );
+    QString namespaces;
+    Q_FOREACH ( const QgsWfsCapabilities::FeatureType &f, mCaps.featureTypes )
+    {
+      if ( f.name == mURI.typeName() )
+      {
+        if ( !f.nameSpace.isEmpty() && f.name.contains( ':' ) )
+        {
+          QString prefixOfTypename = f.name.section( ':', 0, 0 );
+          namespaces = "xmlns(" + prefixOfTypename + "," + f.nameSpace + ")";
+        }
+        break;
+      }
+    }
+    int featureCount = request.getFeatureCount( mWFSVersion, mWFSFilter, namespaces );
 
     {
       QMutexLocker locker( &mMutex );
@@ -1192,7 +1205,7 @@ QgsWFSFeatureHitsRequest::QgsWFSFeatureHitsRequest( QgsWFSDataSourceURI &uri )
 }
 
 int QgsWFSFeatureHitsRequest::getFeatureCount( const QString &WFSVersion,
-    const QString &filter )
+    const QString &filter, const QString &namespaces )
 {
   QUrl getFeatureUrl( mUri.requestUrl( QStringLiteral( "GetFeature" ) ) );
   getFeatureUrl.addQueryItem( QStringLiteral( "VERSION" ),  WFSVersion );
@@ -1205,6 +1218,15 @@ int QgsWFSFeatureHitsRequest::getFeatureCount( const QString &WFSVersion,
     getFeatureUrl.addQueryItem( QStringLiteral( "FILTER" ), filter );
   }
   getFeatureUrl.addQueryItem( QStringLiteral( "RESULTTYPE" ), QStringLiteral( "hits" ) );
+  if ( WFSVersion.startsWith( QLatin1String( "2.0" ) ) )
+    getFeatureUrl.addQueryItem( QStringLiteral( "COUNT" ), QString::number( 1 ) );
+  else
+    getFeatureUrl.addQueryItem( QStringLiteral( "MAXFEATURES" ), QString::number( 1 ) );
+
+  if (!namespaces.isEmpty())
+  {
+      getFeatureUrl.addQueryItem( QStringLiteral( "NAMESPACES" ), namespaces );
+  }
 
   if ( !sendGET( getFeatureUrl, true ) )
     return -1;
