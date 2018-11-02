@@ -163,6 +163,17 @@ class QgsWFSProvider : public QgsVectorDataProvider
                                    QString &geometryAttribute,
                                    QgsFields &fields, QgsWkbTypes::Type &geomType, QString &errorMsg );
 
+    bool readAttributesFromComplexType( QDomElement schemaElement,
+                                        QDomElement complexTypeElement,
+                                        const QString &prefixedTypename,
+                                        QString &geometryAttribute,
+                                        QgsFields &fields,
+                                        QgsWkbTypes::Type &geomType,
+                                        QString &errorMsg );
+
+    QDomElement complexTypeElementByNameContains( QDomElement schemaElement,
+                                              const QString &unprefixedTypename );
+
     //helper methods for WFS-T
 
     /**

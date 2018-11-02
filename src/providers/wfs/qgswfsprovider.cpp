@@ -1270,6 +1270,158 @@ bool QgsWFSProvider::describeFeatureType( QString &geometryAttribute, QgsFields 
   return true;
 }
 
+bool QgsWFSProvider::readAttributesFromComplexType(QDomElement schemaElement,
+                                   QDomElement complexTypeElement,
+                                   const QString &prefixedTypename,
+                                   QString &geometryAttribute,
+                                   QgsFields &fields,
+                                   QgsWkbTypes::Type &geomType,
+                                   QString &errorMsg )
+{
+    //Does this element extend another element?
+    QDomElement extension = complexTypeElement.
+                            firstChildElement( QStringLiteral( "complexContent" ) ).firstChildElement( QStringLiteral( "extension" ) );
+    if ( !extension.isNull() )
+    {
+      QString base = extension.attribute( QStringLiteral( "base" ) );
+      QDomElement baseElement = complexTypeElementByNameContains( schemaElement, base );
+      readAttributesFromComplexType( schemaElement, baseElement, prefixedTypename, geometryAttribute, fields, geomType, errorMsg);
+    }
+
+
+    QDomNodeList attributeNodeList = complexTypeElement.elementsByTagNameNS( QgsWFSConstants::XMLSCHEMA_NAMESPACE, QStringLiteral( "element" ) );
+    if ( attributeNodeList.size() < 1 )
+    {
+      errorMsg = tr( "Cannot find attribute elements" );
+      return false;
+    }
+
+    bool foundGeometryAttribute = false;
+
+    for ( int i = 0; i < attributeNodeList.size(); ++i )
+    {
+      QDomElement attributeElement = attributeNodeList.at( i ).toElement();
+
+      //attribute name
+      QString name = attributeElement.attribute( QStringLiteral( "name" ) );
+      // Some servers like http://ogi.state.ok.us/geoserver/wfs on layer ogi:doq_centroids
+      // return attribute names padded with spaces. See https://issues.qgis.org/issues/3426
+      // I'm not completely sure how legal this
+      // is but this validates with Xerces 3.1, and its schema analyzer does also the trimming.
+      name = name.trimmed();
+
+      //attribute type
+      QString type = attributeElement.attribute( QStringLiteral( "type" ) );
+      if ( type.isEmpty() )
+      {
+        QDomElement extension = attributeElement.firstChildElement( QStringLiteral( "complexType" ) ).
+                                firstChildElement( QStringLiteral( "simpleContent" ) ).firstChildElement( QStringLiteral( "extension" ) );
+        if ( !extension.isNull() )
+        {
+          type = extension.attribute( QStringLiteral( "base" ) );
+        }
+      }
+
+      // attribute ref
+      QString ref = attributeElement.attribute( QStringLiteral( "ref" ) );
+
+      QRegExp gmlPT( "gml:(.*)PropertyType" );
+      QRegExp gmlRefProperty( "gml:(.*)Property" );
+
+      // gmgml: is Geomedia Web Server
+      if ( ! foundGeometryAttribute && type == QLatin1String( "gmgml:Polygon_Surface_MultiSurface_CompositeSurfacePropertyType" ) )
+      {
+        foundGeometryAttribute = true;
+        geometryAttribute = name;
+        geomType = QgsWkbTypes::MultiPolygon;
+      }
+      else if ( ! foundGeometryAttribute && type == QLatin1String( "gmgml:LineString_Curve_MultiCurve_CompositeCurvePropertyType" ) )
+      {
+        foundGeometryAttribute = true;
+        geometryAttribute = name;
+        geomType = QgsWkbTypes::MultiLineString;
+      }
+      // such as http://go.geozug.ch/Zug_WFS_Baumkataster/service.svc/get
+      else if ( type == QLatin1String( "gmgml:Point_MultiPointPropertyType" ) )
+      {
+        foundGeometryAttribute = true;
+        geometryAttribute = name;
+        geomType = QgsWkbTypes::MultiPoint;
+      }
+      //is it a geometry attribute?
+      // the GeometryAssociationType has been seen in #11785
+      else if ( ! foundGeometryAttribute && ( type.indexOf( gmlPT ) == 0 || type == QLatin1String( "gml:GeometryAssociationType" ) ) )
+      {
+        foundGeometryAttribute = true;
+        geometryAttribute = name;
+        // We have a choice parent element we cannot assume any valid information over the geometry type
+        if ( attributeElement.parentNode().nodeName() == QStringLiteral( "choice" ) && ! attributeElement.nextSibling().isNull() )
+          geomType = QgsWkbTypes::Unknown;
+        else
+          geomType = geomTypeFromPropertyType( geometryAttribute, gmlPT.cap( 1 ) );
+      }
+      //MH 090428: sometimes the <element> tags for geometry attributes have only attribute ref="gml:polygonProperty"
+      //Note: this was deprecated with GML3.
+      else if ( ! foundGeometryAttribute &&  ref.indexOf( gmlRefProperty ) == 0 )
+      {
+        foundGeometryAttribute = true;
+        geometryAttribute = ref.mid( 4 ); // Strip gml: prefix
+        QString propertyType( gmlRefProperty.cap( 1 ) );
+        // Set the first character in upper case
+        propertyType = propertyType.at( 0 ).toUpper() + propertyType.mid( 1 );
+        geomType = geomTypeFromPropertyType( geometryAttribute, propertyType );
+      }
+      else if ( !name.isEmpty() ) //todo: distinguish between numerical and non-numerical types
+      {
+        QVariant::Type  attributeType = QVariant::String; //string is default type
+        if ( type.contains( QLatin1String( "double" ), Qt::CaseInsensitive ) || type.contains( QLatin1String( "float" ), Qt::CaseInsensitive ) || type.contains( QLatin1String( "decimal" ), Qt::CaseInsensitive ) )
+        {
+          attributeType = QVariant::Double;
+        }
+        else if ( type.contains( QLatin1String( "int" ), Qt::CaseInsensitive ) ||
+                  type.contains( QLatin1String( "short" ), Qt::CaseInsensitive ) )
+        {
+          attributeType = QVariant::Int;
+        }
+        else if ( type.contains( QLatin1String( "long" ), Qt::CaseInsensitive ) )
+        {
+          attributeType = QVariant::LongLong;
+        }
+        else if ( type.contains( QLatin1String( "dateTime" ), Qt::CaseInsensitive ) )
+        {
+          attributeType = QVariant::DateTime;
+        }
+        fields.append( QgsField( name, attributeType, type ) );
+      }
+    }
+
+
+    return true;
+}
+
+QDomElement QgsWFSProvider::complexTypeElementByNameContains( QDomElement schemaElement,
+    const QString &prefixedTypename )
+{
+    QDomElement complexTypeElement = QDomElement();
+    // Remove the namespace on the typename
+    QString unprefixedTypename = prefixedTypename;
+    if ( unprefixedTypename.contains( ':' ) )
+    {
+      unprefixedTypename = unprefixedTypename.section( ':', 1 );
+    }
+
+    const QDomNodeList complexElements = schemaElement.elementsByTagName( QStringLiteral( "complexType" ) );
+    for ( int i = 0; i < complexElements.size(); i++ )
+    {
+      if ( complexElements.at( i ).toElement().attribute( QStringLiteral( "name" ) ).contains( unprefixedTypename ) )
+      {
+        complexTypeElement = complexElements.at( i ).toElement();
+        break;
+      }
+    }
+    return complexTypeElement;
+}
+
 bool QgsWFSProvider::readAttributesFromSchema( QDomDocument &schemaDoc,
     const QString &prefixedTypename,
     QString &geometryAttribute,
@@ -1277,6 +1429,8 @@ bool QgsWFSProvider::readAttributesFromSchema( QDomDocument &schemaDoc,
     QgsWkbTypes::Type &geomType,
     QString &errorMsg )
 {
+  geomType = QgsWkbTypes::NoGeometry;
+
   //get the <schema> root element
   QDomNodeList schemaNodeList = schemaDoc.elementsByTagNameNS( QgsWFSConstants::XMLSCHEMA_NAMESPACE, QStringLiteral( "schema" ) );
   if ( schemaNodeList.length() < 1 )
@@ -1317,15 +1471,7 @@ bool QgsWFSProvider::readAttributesFromSchema( QDomDocument &schemaDoc,
   // Try to get a complex type whose name contains the unprefixed typename
   if ( elementTypeString.isEmpty() && complexTypeElement.isNull() )
   {
-    const QDomNodeList complexElements = schemaElement.elementsByTagName( QStringLiteral( "complexType" ) );
-    for ( int i = 0; i < complexElements.size(); i++ )
-    {
-      if ( complexElements.at( i ).toElement().attribute( QStringLiteral( "name" ) ).contains( unprefixedTypename ) )
-      {
-        complexTypeElement = complexElements.at( i ).toElement();
-        break;
-      }
-    }
+    complexTypeElement = complexTypeElementByNameContains( schemaElement, unprefixedTypename );
   }
   // Give up :(
   if ( elementTypeString.isEmpty() && complexTypeElement.isNull() )
@@ -1428,115 +1574,14 @@ bool QgsWFSProvider::readAttributesFromSchema( QDomDocument &schemaDoc,
   }
 
   //we have the relevant <complexType> element. Now find out the geometry and the thematic attributes
-  QDomNodeList attributeNodeList = complexTypeElement.elementsByTagNameNS( QgsWFSConstants::XMLSCHEMA_NAMESPACE, QStringLiteral( "element" ) );
-  if ( attributeNodeList.size() < 1 )
-  {
-    errorMsg = tr( "Cannot find attribute elements" );
-    return false;
-  }
+  readAttributesFromComplexType(schemaElement,
+                                complexTypeElement,
+                                prefixedTypename,
+                                geometryAttribute,
+                                fields,
+                                geomType,
+                                errorMsg );
 
-  bool foundGeometryAttribute = false;
-
-  for ( int i = 0; i < attributeNodeList.size(); ++i )
-  {
-    QDomElement attributeElement = attributeNodeList.at( i ).toElement();
-
-    //attribute name
-    QString name = attributeElement.attribute( QStringLiteral( "name" ) );
-    // Some servers like http://ogi.state.ok.us/geoserver/wfs on layer ogi:doq_centroids
-    // return attribute names padded with spaces. See https://issues.qgis.org/issues/3426
-    // I'm not completely sure how legal this
-    // is but this validates with Xerces 3.1, and its schema analyzer does also the trimming.
-    name = name.trimmed();
-
-    //attribute type
-    QString type = attributeElement.attribute( QStringLiteral( "type" ) );
-    if ( type.isEmpty() )
-    {
-      QDomElement extension = attributeElement.firstChildElement( QStringLiteral( "complexType" ) ).
-                              firstChildElement( QStringLiteral( "simpleContent" ) ).firstChildElement( QStringLiteral( "extension" ) );
-      if ( !extension.isNull() )
-      {
-        type = extension.attribute( QStringLiteral( "base" ) );
-      }
-    }
-
-    // attribute ref
-    QString ref = attributeElement.attribute( QStringLiteral( "ref" ) );
-
-    QRegExp gmlPT( "gml:(.*)PropertyType" );
-    QRegExp gmlRefProperty( "gml:(.*)Property" );
-
-    // gmgml: is Geomedia Web Server
-    if ( ! foundGeometryAttribute && type == QLatin1String( "gmgml:Polygon_Surface_MultiSurface_CompositeSurfacePropertyType" ) )
-    {
-      foundGeometryAttribute = true;
-      geometryAttribute = name;
-      geomType = QgsWkbTypes::MultiPolygon;
-    }
-    else if ( ! foundGeometryAttribute && type == QLatin1String( "gmgml:LineString_Curve_MultiCurve_CompositeCurvePropertyType" ) )
-    {
-      foundGeometryAttribute = true;
-      geometryAttribute = name;
-      geomType = QgsWkbTypes::MultiLineString;
-    }
-    // such as http://go.geozug.ch/Zug_WFS_Baumkataster/service.svc/get
-    else if ( type == QLatin1String( "gmgml:Point_MultiPointPropertyType" ) )
-    {
-      foundGeometryAttribute = true;
-      geometryAttribute = name;
-      geomType = QgsWkbTypes::MultiPoint;
-    }
-    //is it a geometry attribute?
-    // the GeometryAssociationType has been seen in #11785
-    else if ( ! foundGeometryAttribute && ( type.indexOf( gmlPT ) == 0 || type == QLatin1String( "gml:GeometryAssociationType" ) ) )
-    {
-      foundGeometryAttribute = true;
-      geometryAttribute = name;
-      // We have a choice parent element we cannot assume any valid information over the geometry type
-      if ( attributeElement.parentNode().nodeName() == QStringLiteral( "choice" ) && ! attributeElement.nextSibling().isNull() )
-        geomType = QgsWkbTypes::Unknown;
-      else
-        geomType = geomTypeFromPropertyType( geometryAttribute, gmlPT.cap( 1 ) );
-    }
-    //MH 090428: sometimes the <element> tags for geometry attributes have only attribute ref="gml:polygonProperty"
-    //Note: this was deprecated with GML3.
-    else if ( ! foundGeometryAttribute &&  ref.indexOf( gmlRefProperty ) == 0 )
-    {
-      foundGeometryAttribute = true;
-      geometryAttribute = ref.mid( 4 ); // Strip gml: prefix
-      QString propertyType( gmlRefProperty.cap( 1 ) );
-      // Set the first character in upper case
-      propertyType = propertyType.at( 0 ).toUpper() + propertyType.mid( 1 );
-      geomType = geomTypeFromPropertyType( geometryAttribute, propertyType );
-    }
-    else if ( !name.isEmpty() ) //todo: distinguish between numerical and non-numerical types
-    {
-      QVariant::Type  attributeType = QVariant::String; //string is default type
-      if ( type.contains( QLatin1String( "double" ), Qt::CaseInsensitive ) || type.contains( QLatin1String( "float" ), Qt::CaseInsensitive ) || type.contains( QLatin1String( "decimal" ), Qt::CaseInsensitive ) )
-      {
-        attributeType = QVariant::Double;
-      }
-      else if ( type.contains( QLatin1String( "int" ), Qt::CaseInsensitive ) ||
-                type.contains( QLatin1String( "short" ), Qt::CaseInsensitive ) )
-      {
-        attributeType = QVariant::Int;
-      }
-      else if ( type.contains( QLatin1String( "long" ), Qt::CaseInsensitive ) )
-      {
-        attributeType = QVariant::LongLong;
-      }
-      else if ( type.contains( QLatin1String( "dateTime" ), Qt::CaseInsensitive ) )
-      {
-        attributeType = QVariant::DateTime;
-      }
-      fields.append( QgsField( name, attributeType, type ) );
-    }
-  }
-  if ( !foundGeometryAttribute )
-  {
-    geomType = QgsWkbTypes::NoGeometry;
-  }
 
   return true;
 }
