@@ -540,8 +540,10 @@ void QgsGmlStreamingParser::startElement( const XML_Char *el, const XML_Char **a
       if ( ok )
       {
         elDimension = dimension;
+        mDimension = elDimension;
       }
     }
+    mDimensionStack.push( mDimension );
   }
   else if ( ( parseMode == Feature || parseMode == FeatureTuple ) &&
             mCurrentFeature &&
@@ -816,7 +818,6 @@ void QgsGmlStreamingParser::startElement( const XML_Char *el, const XML_Char **a
   {
     mDimension = elDimension;
   }
-  mDimensionStack.push( mDimension );
 
   if ( mEpsg == 0 && isGeom )
   {
@@ -843,8 +844,6 @@ void QgsGmlStreamingParser::endElement( const XML_Char *el )
   const int nsLen = ( pszSep ) ? ( int )( pszSep - el ) : 0;
   const int localNameLen = ( pszSep ) ? ( int )( elLen - nsLen ) - 1 : elLen;
   ParseMode parseMode( mParseModeStack.isEmpty() ? None : mParseModeStack.top() );
-
-  mDimension = mDimensionStack.isEmpty() ? 0 : mDimensionStack.pop();
 
   const bool isGMLNS = ( nsLen == mGMLNameSpaceURI.size() && mGMLNameSpaceURIPtr && memcmp( el, mGMLNameSpaceURIPtr, nsLen ) == 0 );
 
@@ -1335,7 +1334,7 @@ int QgsGmlStreamingParser::pointsFromPosListString( QList<QgsPointXY> &points, c
   return 0;
 }
 
-int QgsGmlStreamingParser::pointsFromString( QList<QgsPointXY> &points, const QString &coordString ) const
+int QgsGmlStreamingParser::pointsFromString( QList<QgsPointXY> &points, const QString &coordString )
 {
   if ( mCoorMode == QgsGmlStreamingParser::Coordinate )
   {
@@ -1343,7 +1342,8 @@ int QgsGmlStreamingParser::pointsFromString( QList<QgsPointXY> &points, const QS
   }
   else if ( mCoorMode == QgsGmlStreamingParser::PosList )
   {
-    return pointsFromPosListString( points, coordString, mDimension ? mDimension : 2 );
+    mDimension = mDimensionStack.isEmpty() ? 2 : mDimensionStack.pop();
+    return pointsFromPosListString( points, coordString, mDimension );
   }
   return 1;
 }

@@ -224,7 +224,7 @@ class CORE_EXPORT QgsGmlStreamingParser
       */
     int pointsFromPosListString( QList<QgsPointXY> &points, const QString &coordString, int dimension ) const;
 
-    int pointsFromString( QList<QgsPointXY> &points, const QString &coordString ) const;
+    int pointsFromString( QList<QgsPointXY> &points, const QString &coordString );
     int getPointWKB( QgsWkbPtr &wkbPtr, const QgsPointXY & ) const;
     int getLineWKB( QgsWkbPtr &wkbPtr, const QList<QgsPointXY> &lineCoordinates ) const;
     int getRingWKB( QgsWkbPtr &wkbPtr, const QList<QgsPointXY> &ringCoordinates ) const;
