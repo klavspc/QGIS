@@ -38,6 +38,7 @@
 static const char NS_SEPARATOR = '?';
 static const char *GML_NAMESPACE = "http://www.opengis.net/gml";
 static const char *GML32_NAMESPACE = "http://www.opengis.net/gml/3.2";
+static const int DEFAULT_DIMENSION = 2;
 
 QgsGml::QgsGml(
   const QString &typeName,
@@ -535,14 +536,16 @@ void QgsGmlStreamingParser::startElement( const XML_Char *el, const XML_Char **a
     if ( elDimension == 0 )
     {
       QString srsDimension = readAttribute( QStringLiteral( "srsDimension" ), attr );
-      bool ok;
-      int dimension = srsDimension.toInt( &ok );
-      if ( ok )
-      {
-        elDimension = dimension;
-        mDimension = elDimension;
+      if (srsDimension != ""){
+        bool ok;
+        int dimension = srsDimension.toInt( &ok );
+        if ( ok )
+        {
+          elDimension = dimension;
+        }
       }
     }
+    mDimension = ( elDimension == 0 ) ? DEFAULT_DIMENSION : elDimension;
     mDimensionStack.push( mDimension );
   }
   else if ( ( parseMode == Feature || parseMode == FeatureTuple ) &&
@@ -987,13 +990,18 @@ void QgsGmlStreamingParser::endElement( const XML_Char *el )
     if ( pointList.isEmpty() )
       return;  // error
 
+    QgsWkbPtr tmpWkbPtr( nullptr, 0 );
+    int rc = getPointWKB( tmpWkbPtr, *( pointList.constBegin() ) );
+
+    if ( rc != 0 )
+    {
+      //error
+    }
+
     if ( parseMode == QgsGmlStreamingParser::Geometry )
     {
       //directly add WKB point to the feature
-      if ( getPointWKB( mCurrentWKB, *( pointList.constBegin() ) ) != 0 )
-      {
-        //error
-      }
+      mCurrentWKB = tmpWkbPtr;
 
       if ( mWkbType != QgsWkbTypes::MultiPoint ) //keep multitype in case of geometry type mix
       {
@@ -1002,19 +1010,14 @@ void QgsGmlStreamingParser::endElement( const XML_Char *el )
     }
     else //multipoint, add WKB as fragment
     {
-      QgsWkbPtr wkbPtr( nullptr, 0 );
-      if ( getPointWKB( wkbPtr, *( pointList.constBegin() ) ) != 0 )
-      {
-        //error
-      }
       if ( !mCurrentWKBFragments.isEmpty() )
       {
-        mCurrentWKBFragments.last().push_back( wkbPtr );
+        mCurrentWKBFragments.last().push_back( tmpWkbPtr );
       }
       else
       {
         QgsDebugMsg( "No wkb fragments" );
-        delete [] wkbPtr;
+        delete [] tmpWkbPtr;
       }
     }
   }
@@ -1342,7 +1345,7 @@ int QgsGmlStreamingParser::pointsFromString( QList<QgsPointXY> &points, const QS
   }
   else if ( mCoorMode == QgsGmlStreamingParser::PosList )
   {
-    mDimension = mDimensionStack.isEmpty() ? 2 : mDimensionStack.pop();
+    mDimension = mDimensionStack.isEmpty() ? DEFAULT_DIMENSION : mDimensionStack.pop();
     return pointsFromPosListString( points, coordString, mDimension );
   }
   return 1;
