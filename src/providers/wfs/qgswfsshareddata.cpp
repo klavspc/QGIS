@@ -1271,8 +1271,16 @@ int QgsWFSSharedData::getFeatureCount( bool issueRequestIfNeeded )
   {
     mGetFeatureHitsIssued = true;
     QgsWFSFeatureHitsRequest request( mURI );
-    int featureCount = request.getFeatureCount( mWFSVersion, mWFSFilter );
-
+    QString namespaces = "";
+    Q_FOREACH ( const QgsWfsCapabilities::FeatureType &f, mCaps.featureTypes )
+    {
+      if ( f.name == mURI.typeName() )
+      {
+        namespaces = f.nameSpace;
+        break;
+      }
+    }
+    int featureCount = request.getFeatureCount( mWFSVersion, mWFSFilter, namespaces );
     {
       QMutexLocker locker( &mMutex );
       // Check the return value. Might be -1 in case of error, or might be
@@ -1343,21 +1351,53 @@ QgsWFSFeatureHitsRequest::QgsWFSFeatureHitsRequest( QgsWFSDataSourceURI &uri )
 }
 
 int QgsWFSFeatureHitsRequest::getFeatureCount( const QString &WFSVersion,
-    const QString &filter )
+    const QString &filter, const QString &namespaces )
 {
+  QString typeName = mUri.typeName();
+
+  //Determine whether namespacing is possible in the request
+  bool tryNameSpacing;
+  QString prefixOfTypename;
+  if ( ( tryNameSpacing = ( !namespaces.isEmpty() && typeName.contains( ':' ) ) ) )
+    prefixOfTypename = typeName.section( ':', 0, 0 );
+
   QUrl getFeatureUrl( mUri.requestUrl( QStringLiteral( "GetFeature" ) ) );
   getFeatureUrl.addQueryItem( QStringLiteral( "VERSION" ),  WFSVersion );
-  if ( WFSVersion.startsWith( QLatin1String( "2.0" ) ) )
-    getFeatureUrl.addQueryItem( QStringLiteral( "TYPENAMES" ), mUri.typeName() );
-  else
-    getFeatureUrl.addQueryItem( QStringLiteral( "TYPENAME" ), mUri.typeName() );
+
   if ( !filter.isEmpty() )
   {
     getFeatureUrl.addQueryItem( QStringLiteral( "FILTER" ), filter );
   }
   getFeatureUrl.addQueryItem( QStringLiteral( "RESULTTYPE" ), QStringLiteral( "hits" ) );
 
-  if ( !sendGET( getFeatureUrl, true ) )
+  bool success = false;
+
+  if ( WFSVersion.startsWith( QLatin1String( "2.0" ) ) )
+  {
+    getFeatureUrl.addQueryItem( QStringLiteral( "COUNT" ), QString::number( 1 ) );
+    getFeatureUrl.addQueryItem( QStringLiteral( "TYPENAMES" ), typeName );
+    if ( !( success = sendGET( getFeatureUrl, true ) ) )
+      if ( tryNameSpacing )
+      {
+        QString namespacesQueryValue = "xmlns(" + prefixOfTypename + "," + namespaces + ")";
+        getFeatureUrl.addQueryItem( QStringLiteral( "NAMESPACES" ), namespacesQueryValue );
+        success = sendGET( getFeatureUrl, true );
+      }
+  }
+  else
+  {
+    getFeatureUrl.addQueryItem( QStringLiteral( "MAXFEATURES" ), QString::number( 1 ) );
+    getFeatureUrl.addQueryItem( QStringLiteral( "TYPENAME" ), typeName );
+    if ( !( success = sendGET( getFeatureUrl, true ) ) )
+      if ( tryNameSpacing )
+      {
+        QString namespacesQueryValue = "xmlns(" + prefixOfTypename + "=" + namespaces + ")";
+        getFeatureUrl.addQueryItem( QStringLiteral( "NAMESPACE" ), namespacesQueryValue );
+        success = sendGET( getFeatureUrl, true );
+      }
+  }
+
+  if ( !success )
     return -1;
 
   const QByteArray &buffer = response();

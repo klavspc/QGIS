@@ -21,14 +21,49 @@ QgsWFSDescribeFeatureType::QgsWFSDescribeFeatureType( QgsWFSDataSourceURI &uri )
 }
 
 bool QgsWFSDescribeFeatureType::requestFeatureType( const QString &WFSVersion,
-    const QString &typeName, bool bUsePlural )
+    const QString &typeName, const QString &namespaces )
 {
+
+  //Determine whether namespacing is possible in the request
+  bool tryNameSpacing;
+  QString prefixOfTypename;
+  if ( ( tryNameSpacing = ( !namespaces.isEmpty() && typeName.contains( ':' ) ) ) )
+    prefixOfTypename = typeName.section( ':', 0, 0 );
+
   QUrl url( mUri.requestUrl( QStringLiteral( "DescribeFeatureType" ) ) );
   url.addQueryItem( QStringLiteral( "VERSION" ), WFSVersion );
-  url.addQueryItem( bUsePlural ?
-                    QStringLiteral( "TYPENAMES" ) : QStringLiteral( "TYPENAME" ), typeName );
 
-  return sendGET( url, true, false );
+  bool success = false;
+
+  if ( WFSVersion.startsWith( QLatin1String( "2.0" ) ) )
+  {
+    url.addQueryItem( QStringLiteral( "TYPENAMES" ),  typeName );
+    if ( !( success = sendGET( url, true, false ) ) )
+      if ( tryNameSpacing )
+      {
+        QString namespacesQueryValue = "xmlns(" + prefixOfTypename + "," + namespaces + ")";
+        url.addQueryItem( QStringLiteral( "NAMESPACES" ), namespacesQueryValue );
+        success = sendGET( url, true, false );
+      }
+  }
+  else
+  {
+    url.addQueryItem( QStringLiteral( "TYPENAME" ),  typeName );
+    if ( !( success = sendGET( url, true, false ) ) )
+      if ( tryNameSpacing )
+      {
+        QString namespacesQueryValue = "xmlns(" + prefixOfTypename + "=" + namespaces + ")";
+        url.addQueryItem( QStringLiteral( "NAMESPACE" ), namespacesQueryValue );
+        success = sendGET( url, true, false );
+      }
+  }
+  return success;
+}
+
+bool QgsWFSDescribeFeatureType::requestFeatureType( const QString &WFSVersion,
+    const QString &typeName )
+{
+  return requestFeatureType( WFSVersion, typeName, QStringLiteral( "" ) );
 }
 
 QString QgsWFSDescribeFeatureType::errorMessageWithReason( const QString &reason )
